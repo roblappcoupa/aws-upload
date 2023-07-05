@@ -110,7 +110,7 @@ public class ProcessorQueue : IProcessorQueue
         this.Logger.LogDebug("Done awaiting Completion task on processing block");
 
         this.Logger.LogDebug("Completing upload session {SessionId}", sessionId);
-        await this.SessionClient.CompleteSession(sessionId);
+        //await this.SessionClient.CompleteSession(sessionId); // Don't complete upload session because it will kick off CsvImporter Joule app
         this.Logger.LogDebug("Completed upload session {SessionId}", sessionId);
     }
 
