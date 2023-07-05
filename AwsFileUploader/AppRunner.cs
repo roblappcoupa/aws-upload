@@ -48,6 +48,7 @@ public class AppRunner
             this.options.Value.ChunkSize);
 
         var sessionId = await this.processorQueue.Start();
+        this.logger.LogInformation("Started session {SessionId}", sessionId);
 
         for (var i = 0; i < totalChunks; i++)
         {

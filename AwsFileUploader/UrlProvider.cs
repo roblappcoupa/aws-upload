@@ -1,6 +1,7 @@
 ﻿namespace AwsFileUploader;
 
 using System.Collections.Concurrent;
+using Flurl;
 using Microsoft.Extensions.Logging;
 using Microsoft.Extensions.Options;
 
@@ -47,6 +48,7 @@ internal class UrlProvider : IUrlProvider
 
                 foreach (var url in urls)
                 {
+                    this.logger.LogInformation("adding url segment {Url}", url.Segment);
                     this.PreSignedUrls.Enqueue(url.Url);
                 }
 
@@ -57,6 +59,8 @@ internal class UrlProvider : IUrlProvider
             {
                 throw new Exception("Fatal error trying to get URLs");
             }
+
+            this.logger.LogInformation("Returning {Url}", result);
 
             return result;
         }
