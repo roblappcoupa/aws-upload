@@ -1,34 +1,44 @@
-﻿using Microsoft.Extensions.Options;
-using Newtonsoft.Json;
+﻿namespace AwsFileUploader;
 
-namespace AwsFileUploader;
+using System.Collections.Concurrent;
+using Flurl;
+using Flurl.Http;
+using Microsoft.Extensions.Options;
+using Newtonsoft.Json;
 
 public interface ITokenClient
 {
-    Task<TokenResponse> GetAccessToken();
+    Task<string> GetAccessToken();
 }
 
-public class TokenClient : ITokenClient
+internal sealed class CachingTokenClient : ITokenClient
 {
-    private readonly IOptionsMonitor<AppConfiguration> options;
+    private readonly IOptions<AppConfiguration> options;
 
-    public TokenClient(IOptionsMonitor<AppConfiguration> options)
+    private static readonly IDictionary<string, TokenCacheItem> Cache = new ConcurrentDictionary<string, TokenCacheItem>();
+
+    public CachingTokenClient(IOptions<AppConfiguration> options)
     {
         this.options = options;
     }
 
-    public async Task<TokenResponse> GetAccessToken()
+    public async Task<string> GetAccessToken()
     {
-        var rawResponse = await this.options.CurrentValue.AuthenticationHost
+        if (Cache.TryGetValue(this.options.Value.UserName, out var item) && item.Exp > DateTime.UtcNow)
+        {
+            return item.Token;
+        }
+
+        var rawResponse = await this.options.Value.AuthenticationHost
             .AppendPathSegment("connect/token")
             .PostUrlEncodedAsync(
                 new
                 {
-                    client_id = this.options.CurrentValue.ClientId,
-                    client_secret = this.options.CurrentValue.ClientSecret,
+                    client_id = this.options.Value.ClientId,
+                    client_secret = this.options.Value.ClientSecret,
                     grant_type = "impersonation",
-                    scope = "openid profile llamasoft_platform scg_ws_api",
-                    impersonate_user = this.options.CurrentValue.UserName
+                    scope = "openid profile llamasoft_platform",
+                    impersonate_user = this.options.Value.UserName
                 });
 
         var rawString = await rawResponse.ResponseMessage.Content.ReadAsStringAsync();
@@ -40,8 +50,23 @@ public class TokenClient : ITokenClient
 
         var tokenResponse = JsonConvert.DeserializeObject<TokenResponse>(rawString);
 
-        return tokenResponse;
+        var cachedItem = new TokenCacheItem
+        {
+            Exp = DateTime.UtcNow.AddSeconds(tokenResponse.ExpiresIn - 30),
+            Token = tokenResponse.AccessToken
+        };
+
+        Cache.Add(this.options.Value.UserName, cachedItem);
+
+        return cachedItem.Token;
     }
+}
+
+public class TokenCacheItem
+{
+    public DateTime Exp { get; set; }
+
+    public string Token { get; set; }
 }
 
 public class TokenResponse

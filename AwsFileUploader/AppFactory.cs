@@ -129,7 +129,8 @@ public static class AppFactory
     private static void AddAutofacRegistrations(ContainerBuilder containerBuilder)
     {
         containerBuilder.RegisterType<ProcessorQueue>().As<IProcessorQueue>().SingleInstance();
-        containerBuilder.RegisterType<UrlClient>().As<IUrlClient>().SingleInstance();
+        containerBuilder.RegisterType<CachingTokenClient>().As<ITokenClient>().SingleInstance();
+        containerBuilder.RegisterType<SessionClient>().As<ISessionClient>().SingleInstance();
         containerBuilder.RegisterType<UrlProvider>().As<IUrlProvider>().SingleInstance();
 
         containerBuilder.RegisterType<AppRunner>().AsSelf();

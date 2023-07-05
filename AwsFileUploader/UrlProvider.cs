@@ -6,23 +6,23 @@ using Microsoft.Extensions.Options;
 
 public interface IUrlProvider
 {
-    Task<string> GetUrl();
+    Task<string> GetUrl(Guid sessionId);
 }
 
 internal class UrlProvider : IUrlProvider
 {
-    private readonly IUrlClient urlClient;
+    private readonly ISessionClient sessionClient;
     private readonly IOptions<AppConfiguration> options;
     private readonly ILogger<UrlProvider> logger;
 
     private static readonly SemaphoreSlim semaphoreSlim = new(initialCount: 1);
 
     public UrlProvider(
-        IUrlClient urlClient,
+        ISessionClient sessionClient,
         IOptions<AppConfiguration> options,
         ILogger<UrlProvider> logger)
     {
-        this.urlClient = urlClient;
+        this.sessionClient = sessionClient;
         this.options = options;
         this.logger = logger;
 
@@ -35,9 +35,7 @@ internal class UrlProvider : IUrlProvider
 
     protected int SegmentCount => this.options.Value.SegmentBatchSize;
 
-    protected Guid SessionId => this.options.Value.SessionId;
-
-    public async Task<string> GetUrl()
+    public async Task<string> GetUrl(Guid sessionId)
     {
         await semaphoreSlim.WaitAsync();
 
@@ -45,7 +43,7 @@ internal class UrlProvider : IUrlProvider
         {
             if (this.PreSignedUrls.IsEmpty || !this.PreSignedUrls.TryDequeue(out _))
             {
-                var urls = await this.urlClient.GetUrls(this.CurrentSegmentStart, this.SegmentCount, this.SessionId);
+                var urls = await this.sessionClient.GetUrls(this.CurrentSegmentStart, this.SegmentCount, sessionId);
 
                 foreach (var url in urls)
                 {

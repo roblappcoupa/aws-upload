@@ -17,6 +17,4 @@ public class AppConfiguration
     public string UserName { get; set; }
 
     public int SegmentBatchSize { get; set; } = 1000;
-
-    public Guid SessionId { get; set; }
 }

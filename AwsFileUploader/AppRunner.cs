@@ -47,7 +47,7 @@ public class AppRunner
             totalChunks,
             this.options.Value.ChunkSize);
 
-        await this.processorQueue.Start();
+        var sessionId = await this.processorQueue.Start();
 
         for (var i = 0; i < totalChunks; i++)
         {
@@ -64,6 +64,7 @@ public class AppRunner
             await this.processorQueue.Enqueue(
                 new ProcessChunkRequest
                 {
+                    SessionId = sessionId,
                     ChunkId = chunkNumber.ToString(),
                     Count = bytesRead,
                     Buffer = buffer
@@ -80,7 +81,7 @@ public class AppRunner
 
         this.logger.LogInformation("Processed all {0} chunks", totalChunks);
 
-        await this.processorQueue.Stop();
+        await this.processorQueue.Stop(sessionId);
 
         timer.Stop();
 

@@ -8,22 +8,24 @@ using Microsoft.Extensions.Options;
 
 public interface IProcessorQueue
 {
-    Task Start();
+    Task<Guid> Start();
 
     Task Enqueue(ProcessChunkRequest input);
 
-    Task Stop();
+    Task Stop(Guid sessionId);
 }
 
 public class ProcessorQueue : IProcessorQueue
 {
     public ProcessorQueue(
+        ISessionClient sessionClient,
         IUrlProvider urlProvider,
         ILogger<ProcessorQueue> logger,
         IOptions<AppConfiguration> options)
     {
         this.IsRunning = false;
 
+        this.SessionClient = sessionClient;
         this.UrlProvider = urlProvider;
         this.Logger = logger;
         this.Options = options;
@@ -55,13 +57,15 @@ public class ProcessorQueue : IProcessorQueue
 
     protected ActionBlock<ProcessChunkRequest> ProcessingBlock { get; }
 
+    protected ISessionClient SessionClient { get; }
+
     protected IUrlProvider UrlProvider { get; }
 
     protected IOptions<AppConfiguration> Options { get; }
 
     protected ILogger<ProcessorQueue> Logger { get;  }
 
-    public Task Start()
+    public async Task<Guid> Start()
     {
         if (this.IsRunning)
         {
@@ -70,7 +74,9 @@ public class ProcessorQueue : IProcessorQueue
 
         this.IsRunning = true;
 
-        return Task.CompletedTask;
+        var sessionId = await this.SessionClient.StartSession();
+
+        return sessionId;
     }
 
     public async Task Enqueue(ProcessChunkRequest input)
@@ -86,7 +92,7 @@ public class ProcessorQueue : IProcessorQueue
         }
     }
 
-    public async Task Stop()
+    public async Task Stop(Guid sessionId)
     {
         if (!this.IsRunning)
         {
@@ -95,18 +101,22 @@ public class ProcessorQueue : IProcessorQueue
 
         this.IsRunning = false;
 
-        Console.WriteLine("Calling Complete on the buffer block");
+        this.Logger.LogDebug("Calling Complete on the buffer block");
         this.ProcessingBlock.Complete();
-        Console.WriteLine("Done calling Complete on the buffer block");
+        this.Logger.LogDebug("Done calling Complete on the buffer block");
 
-        Console.WriteLine("Awaiting Completion task on processing block");
+        this.Logger.LogDebug("Awaiting Completion task on processing block");
         await this.ProcessingBlock.Completion;
-        Console.WriteLine("Done awaiting Completion task on processing block");
+        this.Logger.LogDebug("Done awaiting Completion task on processing block");
+
+        this.Logger.LogDebug("Completing upload session {SessionId}", sessionId);
+        await this.SessionClient.CompleteSession(sessionId);
+        this.Logger.LogDebug("Completed upload session {SessionId}", sessionId);
     }
 
     private async Task Process(ProcessChunkRequest chunk)
     {
-        var url = await this.UrlProvider.GetUrl();
+        var url = await this.UrlProvider.GetUrl(chunk.SessionId);
 
         using var stream = new MemoryStream();
 
