@@ -42,7 +42,7 @@ internal class UrlProvider : IUrlProvider
 
         try
         {
-            if (this.PreSignedUrls.IsEmpty || !this.PreSignedUrls.TryDequeue(out _))
+            if (this.PreSignedUrls.IsEmpty || !this.PreSignedUrls.TryPeek(out _))
             {
                 var urls = await this.sessionClient.GetUrls(this.CurrentSegmentStart, this.SegmentCount, sessionId);
 
