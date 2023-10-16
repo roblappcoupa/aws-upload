@@ -1,10 +1,12 @@
 ﻿namespace AwsFileUploader;
 
+using System.Threading;
 using System.Threading.Tasks;
 using System.Threading.Tasks.Dataflow;
 using Flurl.Http;
 using Microsoft.Extensions.Logging;
 using Microsoft.Extensions.Options;
+using Polly;
 
 public interface IProcessorQueue
 {
@@ -15,31 +17,47 @@ public interface IProcessorQueue
     Task Stop(Guid sessionId);
 }
 
-public class ProcessorQueue : IProcessorQueue
+internal class ProcessorQueue : IProcessorQueue
 {
     public ProcessorQueue(
         ISessionClient sessionClient,
-        IUrlProvider urlProvider,
         ILogger<ProcessorQueue> logger,
         IOptions<AppConfiguration> options)
     {
         this.IsRunning = false;
 
         this.SessionClient = sessionClient;
-        this.UrlProvider = urlProvider;
         this.Logger = logger;
         this.Options = options;
+        this.CancellationTokenSource = new CancellationTokenSource();
+        this.RetryPolicy = Policy
+            .Handle<Exception>(exceptionPredicate: exception => exception is not TaskCanceledException)
+            .WaitAndRetryAsync(
+                this.Options.Value.RetryCount,
+                retryAttempt => TimeSpan.FromSeconds(Math.Pow(2, retryAttempt)),
+                (exception, timeSpan, retryCount, context) =>
+                {
+                    var chunkId = string.Empty;
+                    if (context != null && context.TryGetValue("ChunkId", out var x))
+                    {
+                        chunkId = x.ToString();
+                    }
 
+                    this.Logger.LogWarning(exception, "An Exception was thrown during upload for chunk {Chunk}. Attempting retry {Retry}", chunkId, retryCount);
+                });
+        var cancellationToken = this.CancellationTokenSource.Token;
         this.ProcessingBlock = new ActionBlock<ProcessChunkRequest>(
             async input =>
             {
                 try
                 {
-                    await this.Process(input);
+                    await this.Process(input, cancellationToken);
                 }
                 catch (Exception exception)
                 {
-                    this.Logger.LogError(exception, "An Exception was thrown during the processing pipeline");
+                    this.Logger.LogError(exception, "An Exception was thrown during the processing pipeline. Cancelling everything");
+
+                    this.CancellationTokenSource.Cancel();
 
                     throw;
                 }
@@ -48,6 +66,7 @@ public class ProcessorQueue : IProcessorQueue
             {
                 BoundedCapacity = 10,
                 MaxDegreeOfParallelism = Environment.ProcessorCount,
+                MaxMessagesPerTask = 100,
                 //EnsureOrdered = true,
                 SingleProducerConstrained = true // TODO: Experiment with this
             });
@@ -59,11 +78,13 @@ public class ProcessorQueue : IProcessorQueue
 
     protected ISessionClient SessionClient { get; }
 
-    protected IUrlProvider UrlProvider { get; }
-
     protected IOptions<AppConfiguration> Options { get; }
 
-    protected ILogger<ProcessorQueue> Logger { get;  }
+    protected ILogger<ProcessorQueue> Logger { get; }
+
+    protected IAsyncPolicy RetryPolicy { get; }
+
+    protected CancellationTokenSource CancellationTokenSource { get; }
 
     public async Task<Guid> Start()
     {
@@ -114,10 +135,26 @@ public class ProcessorQueue : IProcessorQueue
         this.Logger.LogDebug("Completed upload session {SessionId}", sessionId);
     }
 
-    private async Task Process(ProcessChunkRequest chunk)
+    private async Task Process(ProcessChunkRequest chunk, CancellationToken cancellationToken)
     {
-        var url = await this.UrlProvider.GetUrl(chunk.SessionId);
+        var policyResult = await this.RetryPolicy.ExecuteAndCaptureAsync(
+            action: async (_, _) => await this.OnProcess(chunk),
+            context: new Context
+            {
+                { "ChunkId", chunk.ChunkId }
+            },
+            cancellationToken: cancellationToken);
 
+        if (policyResult.Outcome == OutcomeType.Successful)
+        {
+            return;
+        }
+
+        throw new Exception($"All attempts failed for chunk {chunk.ChunkId}", policyResult.FinalException);
+    }
+
+    private async Task OnProcess(ProcessChunkRequest chunk)
+    {
         using var stream = new MemoryStream();
 
         await stream.WriteAsync(chunk.Buffer, 0, chunk.Count);
@@ -128,7 +165,8 @@ public class ProcessorQueue : IProcessorQueue
 
         this.Logger.LogInformation("Uploading chunk {0}", chunk.ChunkId);
 
-        var flurlRequest = new FlurlRequest(url);
+        var flurlRequest = new FlurlRequest(chunk.Url)
+            .WithTimeout(this.Options.Value.HttpTimeOut);
 
         var response = await flurlRequest.PutAsync(streamContent);
 

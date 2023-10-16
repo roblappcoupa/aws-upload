@@ -7,15 +7,18 @@ using Microsoft.Extensions.Options;
 public class AppRunner
 {
     private readonly IProcessorQueue processorQueue;
+    private readonly IUrlProvider urlProvider;
     private readonly IOptions<AppConfiguration> options;
     private readonly ILogger<AppRunner> logger;
 
     public AppRunner(
         IProcessorQueue processorQueue,
+        IUrlProvider urlProvider,
         IOptions<AppConfiguration> options,
         ILogger<AppRunner> logger)
     {
         this.processorQueue = processorQueue;
+        this.urlProvider = urlProvider;
         this.options = options;
         this.logger = logger;
     }
@@ -62,13 +65,17 @@ public class AppRunner
             var buffer = new byte[this.options.Value.ChunkSize];
             var bytesRead = await fileStream.ReadAsync(buffer, 0, this.options.Value.ChunkSize);
 
+            // Get the URL here, not in the ProcessorQueue, so that if a retry happens, the same URL is used and the data is overwritten
+            var url = await this.urlProvider.GetUrl(sessionId);
+
             await this.processorQueue.Enqueue(
                 new ProcessChunkRequest
                 {
                     SessionId = sessionId,
                     ChunkId = chunkNumber.ToString(),
                     Count = bytesRead,
-                    Buffer = buffer
+                    Buffer = buffer,
+                    Url = url
                 });
 
             remainingChunks--;

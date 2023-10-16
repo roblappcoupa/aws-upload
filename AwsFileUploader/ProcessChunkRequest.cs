@@ -2,11 +2,13 @@
 
 public class ProcessChunkRequest
 {
-    public Guid SessionId { get; set; }
+    public Guid SessionId { get; init; }
 
-    public string ChunkId { get; set; }
+    public string ChunkId { get; init; }
 
-    public int Count { get; set; }
+    public int Count { get; init; }
 
-    public byte[] Buffer { get; set; }
+    public byte[] Buffer { get; init; }
+
+    public string Url { get; init; }
 }
